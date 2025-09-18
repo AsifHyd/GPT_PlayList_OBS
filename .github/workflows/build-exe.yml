@@ -1,0 +1,73 @@
+name: Build OBS Scheduler v1.2 - FULL WebSocket Integration
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies with explicit obsws-python
+      shell: pwsh
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller==6.1.0
+        pip install tkinterdnd2==0.3.0
+        pip install obsws-python==1.5.1
+        # websockets is not required directly, but harmless if kept
+        pip install websockets
+        echo "Verifying obsws-python installation:"
+        python -c "import obsws_python; print('obsws-python version:', obsws_python.__version__)"
+        pip list | Select-String "obsws"
+
+    - name: Download FFmpeg (ffprobe only)
+      shell: pwsh
+      run: |
+        Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile "ffmpeg.zip"
+        Expand-Archive -Path "ffmpeg.zip" -DestinationPath "."
+        Copy-Item "ffmpeg-master-latest-win64-gpl/bin/ffprobe.exe" -Destination "."
+
+    - name: Build EXE with proper WebSocket imports
+      shell: pwsh
+      run: |
+        pyinstaller --onedir --windowed --name "OBS-Scheduler-v1.2-FULL" `
+          --add-binary "ffprobe.exe;." `
+          --hidden-import obsws_python `
+          --hidden-import obsws_python.reqs `
+          --hidden-import websockets `
+          --hidden-import websockets.legacy `
+          --hidden-import websockets.legacy.client `
+          --collect-all obsws_python `
+          scheduler_app.py
+
+    - name: Verify build contents (FIXED)
+      shell: pwsh
+      run: |
+        Write-Host "Build directory contents:"
+        Get-ChildItem -Path "dist\OBS-Scheduler-v1.2-FULL" -Recurse | Format-Table Name, Length, LastWriteTime
+        Write-Host "Searching for obsws_python files:"
+        Get-ChildItem -Path "dist\OBS-Scheduler-v1.2-FULL" -Recurse | Where-Object { $_.Name -like "*obsws*" } | Format-Table Name, FullName
+        Write-Host "Searching for websocket files:"
+        Get-ChildItem -Path "dist\OBS-Scheduler-v1.2-FULL" -Recurse | Where-Object { $_.Name -like "*websocket*" } | Format-Table Name, FullName
+
+    - name: Create release package
+      shell: pwsh
+      run: |
+        Compress-Archive -Path "dist/OBS-Scheduler-v1.2-FULL/*" -DestinationPath "OBS-Scheduler-v1.2-FULL-Windows.zip"
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: OBS-Scheduler-v1.2-FULL-Windows
+        path: OBS-Scheduler-v1.2-FULL-Windows.zip
